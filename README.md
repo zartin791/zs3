@@ -1,27 +1,35 @@
 # zs3
 
-A minimal S3-compatible object storage server in ~1100 lines of Zig. Zero dependencies.
+S3-compatible storage in 1100 lines of Zig. Zero dependencies.
+
+I got mass-evicted by MinIO hitting 12GB RAM for storing test fixtures. So I wrote my own.
 
 ## Why
 
-| | zs3 | MinIO | RustFS |
-|---|-----|-------|--------|
-| Lines of code | ~1,100 | ~200,000 | ~80,000 |
-| Dependencies | 0 | many | ~200 crates |
-| Binary size | ~250KB | ~100MB | ~50MB |
-
 Most S3 usage is PUT, GET, DELETE, LIST with basic auth. You don't need 200k lines of code for that.
 
-## Features
+| | zs3 | MinIO | LocalStack |
+|---|-----|-------|------------|
+| Lines | 1,100 | 200,000 | ??? |
+| Binary | 250KB | 100MB | Docker + JVM |
+| RAM idle | 2MB | 200MB+ | 500MB+ |
+| Dependencies | 0 | many | many |
 
-- Full AWS SigV4 authentication (works with aws CLI, boto3, any S3 SDK)
-- Core operations: PUT, GET, DELETE, HEAD, LIST (v2)
-- Multipart upload for large files
+## What it does
+
+- Full AWS SigV4 authentication (works with aws-cli, boto3, any SDK)
+- PUT, GET, DELETE, HEAD, LIST (v2)
+- Multipart uploads for large files
 - Range requests for streaming/seeking
-- Recursive listing with delimiter and pagination
-- Input validation (bucket names, key length, request size limits)
-- Zero dependencies (only Zig standard library)
-- Single file, easy to audit and modify
+- ~250KB static binary
+
+## What it doesn't do
+
+- Versioning, lifecycle policies, bucket ACLs
+- Pre-signed URLs, object tagging, encryption
+- Anything you'd actually need a cloud provider for
+
+If you need these, use MinIO or AWS.
 
 ## Quick Start
 
@@ -38,19 +46,10 @@ Server listens on port 9000, stores data in `./data`.
 export AWS_ACCESS_KEY_ID=minioadmin
 export AWS_SECRET_ACCESS_KEY=minioadmin
 
-# Create bucket
 aws --endpoint-url http://localhost:9000 s3 mb s3://mybucket
-
-# Upload
 aws --endpoint-url http://localhost:9000 s3 cp file.txt s3://mybucket/
-
-# List
 aws --endpoint-url http://localhost:9000 s3 ls s3://mybucket/ --recursive
-
-# Download
 aws --endpoint-url http://localhost:9000 s3 cp s3://mybucket/file.txt ./
-
-# Delete
 aws --endpoint-url http://localhost:9000 s3 rm s3://mybucket/file.txt
 ```
 
@@ -70,35 +69,27 @@ s3.put_object(Bucket='test', Key='hello.txt', Body=b'world')
 print(s3.get_object(Bucket='test', Key='hello.txt')['Body'].read())
 ```
 
-## Supported Operations
+## The interesting bits
 
-| Operation | Supported |
-|-----------|-----------|
-| PutObject | yes |
-| GetObject | yes |
-| DeleteObject | yes |
-| HeadObject | yes |
-| ListObjectsV2 | yes |
-| ListBuckets | yes |
-| CreateBucket | yes |
-| DeleteBucket | yes |
-| Multipart Upload | yes |
-| Range Requests | yes |
-| SigV4 Auth | yes |
+**SigV4 is elegant.** The whole auth flow is ~150 lines. AWS's "complex" signature scheme is really just: canonical request -> string to sign -> HMAC chain -> compare. No magic.
 
-## Not Supported
+**Storage is just files.** `mybucket/folder/file.txt` is literally `./data/mybucket/folder/file.txt`. You can `ls` your buckets. You can `cp` files in. It just works.
 
-- Versioning
-- Lifecycle policies
-- Bucket policies / ACLs
-- Cross-region replication
-- Server-side encryption (use disk encryption instead)
-- Pre-signed URLs
-- Bucket notifications
-- Object tagging
-- Object lock
+**Zig makes this easy.** No runtime, no GC, no hidden allocations, no surprise dependencies. The binary is just the code + syscalls.
 
-If you need these, use MinIO or a cloud provider.
+## When to use this
+
+- Local dev (replacing localstack/minio)
+- CI artifact storage
+- Self-hosted backups
+- Embedded/appliance storage
+- Learning how S3 actually works
+
+## When NOT to use this
+
+- Production with untrusted users
+- Anything requiring durability guarantees beyond "it's on your disk"
+- If you need any feature in the "not supported" list
 
 ## Configuration
 
@@ -115,6 +106,24 @@ const ctx = S3Context{
 const address = net.Address.parseIp4("0.0.0.0", 9000)
 ```
 
+## Building
+
+Requires Zig 0.15+.
+
+```bash
+zig build                                    # debug
+zig build -Doptimize=ReleaseFast             # release (~250KB)
+zig build -Dtarget=x86_64-linux-musl         # cross-compile
+zig build test                               # run tests
+```
+
+## Testing
+
+```bash
+python3 test_client.py   # 20 integration tests
+zig build test           # 11 unit tests
+```
+
 ## Limits
 
 | Limit | Value |
@@ -122,73 +131,7 @@ const address = net.Address.parseIp4("0.0.0.0", 9000)
 | Max header size | 8 KB |
 | Max body size | 5 GB |
 | Max key length | 1024 bytes |
-| Bucket name length | 3-63 characters |
-
-## Building
-
-Requires Zig 0.15 or later.
-
-```bash
-# Debug build
-zig build
-
-# Release build (~250KB binary)
-zig build -Doptimize=ReleaseFast
-
-# Cross-compile
-zig build -Dtarget=x86_64-linux-musl -Doptimize=ReleaseFast
-zig build -Dtarget=aarch64-linux-musl -Doptimize=ReleaseFast
-```
-
-## Architecture
-
-```
-main.zig
-  main()                      server loop
-  S3Context                   config and path helpers
-  Request/Response            HTTP parsing and writing
-  route()                     method + path dispatch
-  SigV4                       AWS signature verification
-    parseAuthHeader()
-    buildCanonicalRequest()
-    buildStringToSign()
-    calculateSignature()
-  Handlers
-    handlePutObject()
-    handleGetObject()
-    handleDeleteObject()
-    handleHeadObject()
-    handleListObjects()
-    handleListBuckets()
-    handleCreateBucket()
-    handleDeleteBucket()
-    handleInitiateMultipart()
-    handleUploadPart()
-    handleCompleteMultipart()
-    handleAbortMultipart()
-  Helpers
-    isValidBucketName()
-    isValidKey()
-    uriEncode()
-    sortQueryString()
-    parseRange()
-    xmlEscape()
-```
-
-Storage layout:
-
-```
-data/
-  mybucket/
-    file.txt
-    folder/
-      nested.txt
-  .uploads/
-    {upload_id}/
-      1
-      2
-      .meta
-```
+| Bucket name | 3-63 chars |
 
 ## Security
 
@@ -198,20 +141,8 @@ data/
 - No shell commands, no eval, no external network calls
 - Single file, easy to audit
 
-TLS is not included. Use a reverse proxy (nginx, caddy) for HTTPS.
-
-## Use Cases
-
-- Local development (replace localstack/minio)
-- CI/CD artifact storage
-- Self-hosted backups
-- Embedded storage for appliances
-- Learning how S3 protocol works
+TLS not included. Use a reverse proxy (nginx, caddy) for HTTPS.
 
 ## License
 
-[WTFPL](LICENSE)
-
-## Contributing
-
-Read it, modify it, make it yours.
+[WTFPL](LICENSE) - Read it, fork it, break it.
