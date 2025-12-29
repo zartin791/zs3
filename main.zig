@@ -748,9 +748,10 @@ fn handlePutObject(ctx: *const S3Context, allocator: Allocator, req: *Request, r
         return;
     };
 
-    const etag = SigV4.hash(req.body);
-    var etag_hex: [66]u8 = undefined;
-    _ = std.fmt.bufPrint(&etag_hex, "\"{x}\"", .{etag}) catch unreachable;
+    // Use fast hash for ETag (wyhash is ~10x faster than SHA256)
+    const hash = std.hash.Wyhash.hash(0, req.body);
+    var etag_hex: [20]u8 = undefined;
+    _ = std.fmt.bufPrint(&etag_hex, "\"{x}\"", .{hash}) catch unreachable;
 
     res.ok();
     res.setHeader("ETag", &etag_hex);
@@ -1019,16 +1020,11 @@ fn collectKeys(allocator: Allocator, base_path: []const u8, current_prefix: []co
             allocator.free(full_key);
         } else if (entry.kind == .file) {
             if (filter_prefix.len == 0 or std.mem.startsWith(u8, full_key, filter_prefix)) {
-                const file_path = try std.fs.path.join(allocator, &[_][]const u8{ base_path, full_key });
-                defer allocator.free(file_path);
-
+                // Use statFile instead of open+stat+close - much faster
                 const size = blk: {
-                    var file = std.fs.cwd().openFile(file_path, .{}) catch break :blk 0;
-                    defer file.close();
-                    const stat = file.stat() catch break :blk 0;
+                    const stat = dir.statFile(entry.name) catch break :blk 0;
                     break :blk stat.size;
                 };
-
                 try keys.append(allocator, .{ .key = full_key, .size = size });
             } else {
                 allocator.free(full_key);
