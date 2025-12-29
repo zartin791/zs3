@@ -1,6 +1,6 @@
 # zs3
 
-S3-compatible storage in ~1200 lines of Zig. Zero dependencies.
+S3-compatible storage in ~1K lines of Zig. Zero dependencies.
 
 ## Why
 
