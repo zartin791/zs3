@@ -90,7 +90,7 @@ const CAS = struct {
     pub fn exists(self: *const CAS, allocator: Allocator, hash: ContentHash) bool {
         const path = self.hashToPath(allocator, hash) catch return false;
         defer allocator.free(path);
-        return std.fs.cwd().access(path, .{}) != error.FileNotFound;
+        return if (std.fs.cwd().access(path, .{})) |_| true else |_| false;
     }
 
     /// Convert hash to filesystem path: .cas/xx/xxxx....blob
@@ -2543,19 +2543,16 @@ fn handleDistributedPut(ctx: *const S3Context, allocator: Allocator, req: *Reque
     const hash = CAS.computeHash(req.body);
 
     // For small objects, store inline in metadata (skip CAS)
+    // Inline objects are NOT announced to DHT since they can't be fetched via blob API
     if (req.body.len <= INLINE_THRESHOLD) {
         try dist.meta_index.putWithData(allocator, bucket, key, hash, req.body.len, req.body);
     } else {
         // Store content in CAS for larger objects
         _ = try dist.cas.store(allocator, req.body);
         try dist.meta_index.put(allocator, bucket, key, hash, req.body.len);
-    }
 
-    // Announce to DHT
-    dist.kademlia.announce(hash) catch {};
-
-    // Schedule replication (only for CAS objects)
-    if (req.body.len > INLINE_THRESHOLD) {
+        // Announce to DHT and schedule replication (only for CAS objects)
+        dist.kademlia.announce(hash) catch {};
         dist.replication.schedule(hash) catch {};
     }
 
@@ -2835,12 +2832,13 @@ fn collectMetaKeys(allocator: Allocator, base_path: []const u8, current_prefix: 
                 const key = full_name[0..key_name_len];
 
                 if (filter_prefix.len == 0 or std.mem.startsWith(u8, key, filter_prefix)) {
-                    // Get size from metadata
+                    // Get size from metadata (returns null for tombstones)
                     const meta = meta_index.get(allocator, bucket, key) catch null;
-                    const size = if (meta) |m| m.size else 0;
-
-                    const key_copy = try allocator.dupe(u8, key);
-                    try keys.append(allocator, .{ .key = key_copy, .size = size });
+                    // Skip tombstoned entries - they shouldn't appear in listings
+                    if (meta) |m| {
+                        const key_copy = try allocator.dupe(u8, key);
+                        try keys.append(allocator, .{ .key = key_copy, .size = m.size });
+                    }
                 }
             }
             allocator.free(full_name);
