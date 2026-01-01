@@ -1,6 +1,6 @@
 # zs3
 
-S3-compatible storage in ~1.4K lines of Zig. Zero dependencies.
+S3-compatible storage in ~2.5K lines of Zig. Zero dependencies. Optional distributed mode.
 
 ## Why
 
@@ -8,19 +8,28 @@ Most S3 usage is PUT, GET, DELETE, LIST with basic auth. You don't need 200k lin
 
 | | zs3 | RustFS | MinIO |
 |---|-----|--------|-------|
-| Lines | ~1,400 | ~80,000 | 200,000 |
+| Lines | ~2,500 | ~80,000 | 200,000 |
 | Binary | 250KB | ~50MB | 100MB |
 | RAM idle | 2MB | ~100MB | 200MB+ |
 | Dependencies | 0 | ~200 crates | many |
 
 ## What it does
 
+**Standalone Mode:**
 - Full AWS SigV4 authentication (works with aws-cli, boto3, any SDK)
 - PUT, GET, DELETE, HEAD, LIST (v2)
 - DeleteObjects batch operation
 - Multipart uploads for large files
 - Range requests for streaming/seeking
 - ~250KB static binary
+
+**Distributed Mode (IPFS-like):**
+- Content-addressed storage with BLAKE3 hashing
+- Automatic deduplication across the network
+- Full Kademlia DHT for peer/content discovery
+- Peer-to-peer content transfer
+- Zero-config LAN discovery ready
+- Same S3 API - works with existing tools
 
 ## What it doesn't do
 
@@ -38,6 +47,39 @@ zig build -Doptimize=ReleaseFast
 ```
 
 Server listens on port 9000, stores data in `./data`.
+
+## Distributed Mode
+
+```bash
+# Node 1
+./zs3 --distributed --port=9000
+
+# Node 2 (connects to Node 1)
+./zs3 --distributed --port=9001 --bootstrap=localhost:9000
+
+# Node 3
+./zs3 --distributed --port=9002 --bootstrap=localhost:9000,localhost:9001
+```
+
+All nodes share the same S3 API. PUT on any node, GET from any node.
+
+**Storage Layout (distributed):**
+```
+data/
+├── .node_id              # Persistent 160-bit node identity
+├── .cas/                 # Content-Addressed Store
+│   └── ab/abc123...blob  # Files stored by BLAKE3 hash
+├── .index/               # S3 path → content hash mapping
+│   └── bucket/key.meta
+└── bucket/               # (standalone mode only)
+```
+
+**Peer Protocol:**
+```bash
+curl http://localhost:9000/_zs3/ping           # Node health + ID
+curl http://localhost:9000/_zs3/peers          # Known peers
+curl http://localhost:9000/_zs3/providers/HASH # Who has content
+```
 
 ## Usage
 
