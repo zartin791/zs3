@@ -1191,9 +1191,23 @@ const Response = struct {
         var fbs = std.io.fixedBufferStream(&buf);
         const w = fbs.writer();
 
-        const content_len = if (self.send_file != null) self.send_file_size else self.body.len;
         try w.print("HTTP/1.1 {d} {s}\r\n", .{ self.status, self.status_text });
-        try w.print("Content-Length: {d}\r\nConnection: close\r\n", .{content_len});
+
+        // Check if Content-Length was already set via setHeader
+        var has_content_length = false;
+        for (self.headers.items) |h| {
+            if (std.ascii.eqlIgnoreCase(h.name, "content-length")) {
+                has_content_length = true;
+                break;
+            }
+        }
+
+        // Only add auto Content-Length if not already set
+        if (!has_content_length) {
+            const content_len = if (self.send_file != null) self.send_file_size else self.body.len;
+            try w.print("Content-Length: {d}\r\n", .{content_len});
+        }
+        try w.writeAll("Connection: close\r\n");
 
         for (self.headers.items) |h| {
             try w.print("{s}: {s}\r\n", .{ h.name, h.value });
@@ -1386,7 +1400,9 @@ fn handleConnectionWithStream(allocator: Allocator, ctx: *const S3Context, strea
 pub fn isValidBucketName(name: []const u8) bool {
     if (name.len < 3 or name.len > MAX_BUCKET_LENGTH) return false;
     for (name) |c| {
-        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '.') return false;
+        // S3 bucket names must be lowercase letters, numbers, hyphens, or dots
+        // Uppercase letters are NOT allowed
+        if (!std.ascii.isLower(c) and !std.ascii.isDigit(c) and c != '-' and c != '.') return false;
     }
     if (name[0] == '-' or name[0] == '.' or name[name.len - 1] == '-' or name[name.len - 1] == '.') return false;
     return true;
@@ -2088,6 +2104,10 @@ fn handleDeleteBucket(ctx: *const S3Context, allocator: Allocator, res: *Respons
     std.fs.cwd().deleteDir(path) catch |err| switch (err) {
         error.DirNotEmpty => {
             sendError(res, 409, "BucketNotEmpty", "Bucket is not empty");
+            return;
+        },
+        error.FileNotFound => {
+            sendError(res, 404, "NoSuchBucket", "Bucket does not exist");
             return;
         },
         else => std.log.warn("delete bucket failed: {}", .{err}),
