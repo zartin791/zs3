@@ -18,9 +18,11 @@ Most S3 usage is PUT, GET, DELETE, LIST with basic auth. You don't need 200k lin
 **Standalone Mode:**
 - Full AWS SigV4 authentication (works with aws-cli, boto3, any SDK)
 - PUT, GET, DELETE, HEAD, LIST (v2)
+- HeadBucket for bucket existence checks
 - DeleteObjects batch operation
 - Multipart uploads for large files
 - Range requests for streaming/seeking
+- HTTP 100-continue support (boto3 compatible)
 - ~360KB static binary
 
 **Distributed Mode (IPFS-like):**
@@ -164,8 +166,9 @@ zig build test                               # run tests
 ## Testing
 
 ```bash
-python3 test_client.py   # 24 integration tests
-zig build test           # 11 unit tests
+python3 test_client.py          # 24 integration tests
+python3 test_comprehensive.py   # boto3 comprehensive tests (requires: pip install boto3)
+zig build test                  # 11 unit tests
 ```
 
 ## Benchmark
@@ -203,6 +206,7 @@ Run your own: `python3 benchmark.py`
 
 - Full SigV4 signature verification
 - Input validation on bucket names and object keys
+- Path traversal protection (blocks `..` in keys)
 - Request size limits
 - No shell commands, no eval, no external network calls
 - Single file, easy to audit
