@@ -1734,6 +1734,44 @@ fn isUnreserved(c: u8) bool {
         c == '-' or c == '.' or c == '_' or c == '~';
 }
 
+pub fn uriDecode(allocator: Allocator, input: []const u8) ![]const u8 {
+    var result: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer result.deinit(allocator);
+
+    var i: usize = 0;
+    while (i < input.len) {
+        if (input[i] == '%' and i + 2 < input.len) {
+            const high = hexDigitToInt(input[i + 1]) orelse {
+                try result.append(allocator, input[i]);
+                i += 1;
+                continue;
+            };
+            const low = hexDigitToInt(input[i + 2]) orelse {
+                try result.append(allocator, input[i]);
+                i += 1;
+                continue;
+            };
+            try result.append(allocator, (high << 4) | low);
+            i += 3;
+        } else if (input[i] == '+') {
+            try result.append(allocator, ' ');
+            i += 1;
+        } else {
+            try result.append(allocator, input[i]);
+            i += 1;
+        }
+    }
+
+    return result.toOwnedSlice(allocator);
+}
+
+fn hexDigitToInt(c: u8) ?u8 {
+    if (c >= '0' and c <= '9') return c - '0';
+    if (c >= 'A' and c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' and c <= 'f') return c - 'a' + 10;
+    return null;
+}
+
 pub fn sortQueryString(allocator: Allocator, query: []const u8) ![]const u8 {
     if (query.len == 0) return try allocator.dupe(u8, "");
 
@@ -1783,8 +1821,10 @@ fn handlePutObject(ctx: *const S3Context, allocator: Allocator, req: *Request, r
 
     // Use fast hash for ETag (wyhash is ~10x faster than SHA256)
     const hash = std.hash.Wyhash.hash(0, req.body);
-    var etag_hex: [20]u8 = undefined;
-    const etag = std.fmt.bufPrint(&etag_hex, "\"{x}\"", .{hash}) catch unreachable;
+    const etag = std.fmt.allocPrint(allocator, "\"{x}\"", .{hash}) catch {
+        sendError(res, 500, "InternalError", "ETag failed");
+        return;
+    };
 
     res.ok();
     res.setHeader("ETag", etag);
@@ -1794,11 +1834,10 @@ fn handleGetObject(ctx: *const S3Context, allocator: Allocator, req: *Request, r
     const path = try ctx.objectPath(allocator, bucket, key);
     defer allocator.free(path);
 
-    const file = std.fs.cwd().openFile(path, .{}) catch {
+    var file = std.fs.cwd().openFile(path, .{}) catch {
         sendError(res, 404, "NoSuchKey", "Object not found");
         return;
     };
-    // File will be closed by Response.deinit()
 
     const stat = file.stat() catch {
         file.close();
@@ -1806,6 +1845,7 @@ fn handleGetObject(ctx: *const S3Context, allocator: Allocator, req: *Request, r
         return;
     };
 
+    // For range requests, use sendFile without ETag (efficient for large files)
     if (req.header("range")) |range_header| {
         if (parseRange(range_header, stat.size)) |range| {
             const len = range.end - range.start + 1;
@@ -1822,9 +1862,24 @@ fn handleGetObject(ctx: *const S3Context, allocator: Allocator, req: *Request, r
         }
     }
 
+    // For full file, read content to compute ETag
+    const content = file.readToEndAlloc(allocator, 1024 * 1024 * 1024) catch {
+        file.close();
+        sendError(res, 500, "InternalError", "Read failed");
+        return;
+    };
+    file.close();
+
+    const hash = std.hash.Wyhash.hash(0, content);
+    const etag = std.fmt.allocPrint(allocator, "\"{x}\"", .{hash}) catch {
+        sendError(res, 500, "InternalError", "ETag failed");
+        return;
+    };
+
     res.ok();
     res.setHeader("Accept-Ranges", "bytes");
-    res.setSendFile(file, stat.size, 0);
+    res.setHeader("ETag", etag);
+    res.body = content;
 }
 
 fn handleDeleteObject(ctx: *const S3Context, allocator: Allocator, res: *Response, bucket: []const u8, key: []const u8) !void {
@@ -1909,19 +1964,42 @@ fn handleHeadObject(ctx: *const S3Context, allocator: Allocator, res: *Response,
         return;
     };
 
-    var buf: [32]u8 = undefined;
-    const len_str = std.fmt.bufPrint(&buf, "{d}", .{stat.size}) catch unreachable;
+    // Compute ETag from file content (same as PUT uses)
+    const content = file.readToEndAlloc(allocator, 1024 * 1024 * 1024) catch {
+        sendError(res, 500, "InternalError", "Read failed");
+        return;
+    };
+    defer allocator.free(content);
+
+    const hash = std.hash.Wyhash.hash(0, content);
+    const etag = std.fmt.allocPrint(allocator, "\"{x}\"", .{hash}) catch {
+        sendError(res, 500, "InternalError", "ETag failed");
+        return;
+    };
+
+    const len_str = std.fmt.allocPrint(allocator, "{d}", .{stat.size}) catch {
+        sendError(res, 500, "InternalError", "Format failed");
+        return;
+    };
 
     res.ok();
     res.setHeader("Content-Length", len_str);
     res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("ETag", etag);
 }
 
 fn handleListObjects(ctx: *const S3Context, allocator: Allocator, req: *Request, res: *Response, bucket: []const u8) !void {
-    const prefix = getQueryParam(req.query, "prefix") orelse "";
+    const prefix_raw = getQueryParam(req.query, "prefix") orelse "";
+    const prefix = try uriDecode(allocator, prefix_raw);
+    defer allocator.free(prefix);
+
     const max_keys_str = getQueryParam(req.query, "max-keys") orelse "1000";
     const max_keys = std.fmt.parseInt(usize, max_keys_str, 10) catch 1000;
-    const delimiter = getQueryParam(req.query, "delimiter");
+
+    const delimiter_raw = getQueryParam(req.query, "delimiter");
+    const delimiter = if (delimiter_raw) |d| try uriDecode(allocator, d) else null;
+    defer if (delimiter) |d| allocator.free(d);
+
     const continuation = getQueryParam(req.query, "continuation-token");
 
     const bucket_path = try ctx.bucketPath(allocator, bucket);
@@ -2742,11 +2820,20 @@ fn handleDistributedDelete(ctx: *const S3Context, allocator: Allocator, res: *Re
 fn handleDistributedList(ctx: *const S3Context, allocator: Allocator, req: *Request, res: *Response, bucket: []const u8) !void {
     const dist = ctx.distributed.?;
 
-    const prefix = getQueryParam(req.query, "prefix") orelse "";
+    const prefix_raw = getQueryParam(req.query, "prefix") orelse "";
+    const prefix = try uriDecode(allocator, prefix_raw);
+    defer allocator.free(prefix);
+
     const max_keys_str = getQueryParam(req.query, "max-keys") orelse "1000";
     const max_keys = std.fmt.parseInt(usize, max_keys_str, 10) catch 1000;
-    const delimiter = getQueryParam(req.query, "delimiter");
-    const continuation = getQueryParam(req.query, "continuation-token");
+
+    const delimiter_raw = getQueryParam(req.query, "delimiter");
+    const delimiter = if (delimiter_raw) |d| try uriDecode(allocator, d) else null;
+    defer if (delimiter) |d| allocator.free(d);
+
+    const continuation_raw = getQueryParam(req.query, "continuation-token");
+    const continuation = if (continuation_raw) |c| try uriDecode(allocator, c) else null;
+    defer if (continuation) |c| allocator.free(c);
 
     // Path to the bucket's index directory
     const index_path = try std.fs.path.join(allocator, &.{ dist.meta_index.data_dir, ".index", bucket });
